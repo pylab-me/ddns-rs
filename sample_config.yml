@@ -1,0 +1,29 @@
+globals:
+  interval: 300
+  timeout_secs: 10
+  user_agent: "ddns-rs/0.1"
+  log_level: "info"
+
+domains:
+  - name: abc1.example.com
+    ip_type: 4
+    ip_urls:
+      - "https://api.ipify.org"
+      - "https://ifconfig.me/ip"
+    provider:
+      - name: cloudflare
+        api_key: your_cloudflare_api_token
+        zone_id: your_zone_id
+        proxied: true
+        ttl: 1
+
+  - name: abc2.example.com
+    record_type: AAAA
+    ip_urls:
+      - "https://api64.ipify.org"
+    provider:
+      - name: cloudflare
+        api_key: your_cloudflare_api_token
+        zone_id: your_zone_id
+        proxied: false
+        ttl: 120

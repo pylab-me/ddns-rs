@@ -1,0 +1,21 @@
+[Unit]
+Description=ddns-rs Cloudflare DDNS service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ddns
+Group=ddns
+WorkingDirectory=/etc/ddns-rs
+ExecStart=/usr/local/bin/ddns-rs run --config /etc/ddns-rs/config.yml
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/etc/ddns-rs
+
+[Install]
+WantedBy=multi-user.target
