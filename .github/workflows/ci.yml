@@ -1,0 +1,159 @@
+name: Rust Build (CI)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BIN_NAME: ddns-rs
+
+jobs:
+  build:
+    name: build-${{ matrix.id }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            target: x86_64-unknown-linux-musl
+            apt_packages: musl-tools ca-certificates tar libssl-dev
+            asset_name: ddns-rs-linux-x64.tar.gz
+            rustflags: -C target-cpu=x86-64
+            bin_path: target/x86_64-unknown-linux-musl/release/ddns-rs
+            package_script: |
+              tar -C target/x86_64-unknown-linux-musl/release \
+                  -czf dist/ddns-rs-linux-x64.tar.gz \
+                  "${BIN_NAME}"
+
+          - id: windows-x64
+            target: x86_64-pc-windows-gnu
+            apt_packages: mingw-w64 zip ca-certificates
+            asset_name: ddns-rs-windows-x64.zip
+            rustflags: -C target-cpu=x86-64
+            bin_path: target/x86_64-pc-windows-gnu/release/ddns-rs.exe
+            package_script: |
+              cd target/x86_64-pc-windows-gnu/release
+              zip -9 "${GITHUB_WORKSPACE}/dist/ddns-rs-windows-x64.zip" "${BIN_NAME}.exe"
+
+    container:
+      image: rust:slim
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ${{ matrix.apt_packages }}
+          rustup target add ${{ matrix.target }}
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Generate Cargo cache manifest
+        run: |
+          mkdir -p .ci
+
+          sed -E '
+            /^\[package\]/,/^\[/ {
+              /^[[:space:]]*version[[:space:]]*=/d
+            }
+            /^[[:space:]]*canonical_version[[:space:]]*=/d
+          ' Cargo.toml > .ci/Cargo.cache.toml
+
+          cat .ci/Cargo.cache.toml
+
+      - name: Rust Cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('.ci/Cargo.cache.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rust-toolchain') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: Build binary
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          OPENSSL_DIR: /usr/local/ssl
+          PKG_CONFIG_PATH: /usr/local/ssl/lib/pkgconfig
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Check binary exists
+        run: test -f "${{ matrix.bin_path }}"
+
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          ${{ matrix.package_script }}
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.id }}
+          path: dist/${{ matrix.asset_name }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 6
+
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Show assets
+        run: ls -lah release-assets
+
+      - name: Upload tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload rolling prerelease
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: latest
+          name: Latest Build
+          body: |
+            Automated build
+            ref: ${{ github.ref }}
+            sha: ${{ github.sha }}
+            run: ${{ github.run_number }}
+          prerelease: true
+          files: release-assets/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
